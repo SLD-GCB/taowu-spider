@@ -1,5 +1,9 @@
 # taowu-spider
 
+<p align="center">
+  <img src="docs/hero.png" width="720" alt="梼杌 PC 版界面">
+</p>
+
 最新版本v4.4做好了，新增了功能，并且全面升级了软件性能
 
 压缩包里留下一张png图片，请拿着这张图片先到项目库核对这张防伪图标，如果不一致皆属假冒
