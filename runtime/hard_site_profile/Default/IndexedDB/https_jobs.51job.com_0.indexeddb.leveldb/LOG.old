@@ -1,0 +1,5 @@
+2026/06/23-22:52:59.587 1b00 Reusing MANIFEST d:\github_code\code\python\project\taowu-spider-v12.1.1-original_code\taowu-spider-v12.1.1\runtime\hard_site_profile\Default\IndexedDB\https_jobs.51job.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/23-22:52:59.588 1b00 Recovering log #42
+2026/06/23-22:52:59.588 1b00 Reusing old log d:\github_code\code\python\project\taowu-spider-v12.1.1-original_code\taowu-spider-v12.1.1\runtime\hard_site_profile\Default\IndexedDB\https_jobs.51job.com_0.indexeddb.leveldb/000042.log 
+2026/06/23-22:52:59.588 1b00 Delete type=2 #40
+2026/06/23-22:52:59.763 4740 Manual compaction at level-0 from '\x00\x0d\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x0e\x00\x00\x00' @ 0 : 0; will stop at (end)

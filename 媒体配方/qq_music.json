@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "name": "qq_music",
+  "desc": "QQ音乐【只取免费档】。曲目信息接口带 pay.pay_play 字段：0=免费、1=需付费，只有 0 才出轨；随后向 vkey 接口要播放地址，付费曲目拿不到地址（purl 为空）。两道闸门互为印证：声明档位在上游拦，实际可播性在下游拦。cookies 写 none：纯匿名，任何已登录会员会话都不参与，闸门只认曲子本身的档位、不认账号。",
+  "_字段名坑": "两个接口的字段位置完全不同，写错不报错、只是静默变空。① 曲目信息：歌名 data[0].name、歌手 data[0].singer[0].name、专辑 data[0].album.name、时长 data[0].interval（秒）；② vkey 在 req.data.sip[0]（服务器地址）+ req.data.midurlinfo[0].purl（相对路径），两者必须拼起来才是完整地址，purl 单独用不了。",
+  "_实测": "付费曲目挡得很干净：陈奕迅 0/15、五月天 0/15、林俊杰 1/15、邓紫棋 2/15 拿到地址，其余全部 result=104003 且 purl 为空 —— 拿到地址的那几首正好是 pay_play=0 的。免费档真下到 1,634,130 字节的 audio/mp4，与远程源 **sha256 逐字节相同**，隐含码率≈99kbps 与标称 132 秒吻合（不是 30 秒试听片段）；付费档 0 轨、一个文件都不落。",
+  "_不覆盖": "只认单曲页 y.qq.com/n/ryqq/songDetail/<mid> 与 i.y.qq.com/v8/playsong.html?songmid=<mid> 两种 URL 形态。歌单/专辑/歌手页、以及 c6.y.qq.com 的分享短链都没验证过 —— 取不到 mid 就 0 轨（宁可不抓也不猜）。",
+  "enabled": true,
+  "order": 110,
+
+  "host_suffix": ["y.qq.com"],
+  "short_hosts": [],
+  "cookies": "none",
+
+  "session": {
+    "referer": "https://y.qq.com/",
+    "headers": {"Accept-Language": "zh-CN,zh;q=0.9"}
+  },
+
+  "identity": {
+    "any_of": [
+      {"name": "mid", "from": "url", "pattern": "songDetail/([0-9A-Za-z]{14})(?![0-9A-Za-z])"},
+      {"name": "mid", "from": "url", "pattern": "songmid=([0-9A-Za-z]{14})(?![0-9A-Za-z])"},
+      {"name": "mid", "from": "url", "pattern": "/song/([0-9A-Za-z]{14})(?![0-9A-Za-z])"}
+    ]
+  },
+
+  "steps": [
+    {
+      "name": "曲目信息",
+      "desc": "免签名。判档就是靠这里的 pay.pay_play。",
+      "method": "GET",
+      "url": "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?songmid={mid}&platform=yqq&format=json",
+      "referer": "https://y.qq.com/",
+      "timeout": 15,
+      "as": "info",
+      "expect": [
+        {"path": "code", "op": "eq", "value": 0},
+        {"path": "data[0].name", "op": "nonempty"}
+      ],
+      "required": true
+    },
+    {
+      "name": "取播放地址",
+      "desc": "vkey 接口也免签名。付费曲目在这里返回 result=104003 且 purl 为空 —— required=true 让这种曲子直接 0 轨。",
+      "method": "POST",
+      "url": "https://u.y.qq.com/cgi-bin/musicu.fcg",
+      "headers": {"Content-Type": "application/json"},
+      "referer": "https://y.qq.com/",
+      "timeout": 15,
+      "as": "vk",
+      "json": {
+        "req": {
+          "module": "vkey.GetVkeyServer",
+          "method": "CgiGetVkey",
+          "param": {
+            "guid": "10000",
+            "songmid": ["{mid}"],
+            "songtype": [0],
+            "uin": "0",
+            "loginflag": 1,
+            "platform": "20"
+          }
+        },
+        "comm": {"uin": 0, "format": "json", "ct": 24, "cv": 0}
+      },
+      "expect": [{"path": "req.data.midurlinfo[0].purl", "op": "nonempty"}],
+      "required": true
+    }
+  ],
+
+  "emit": [
+    {
+      "name": "只出免费档",
+      "desc": "pay_play 用 eq 而不是 in：eq 有宽松数值比较，字段哪天变成字符串 \"0\" 也照样命中。",
+      "when": [{"path": "info.data[0].pay.pay_play", "op": "eq", "value": 0}],
+      "set": {
+        "title": {"path": "info.data[0].name", "default": ""},
+        "artist": {"path": "info.data[0].singer[0].name", "default": ""},
+        "album": {"path": "info.data[0].album.name", "default": ""},
+        "dur": {"path": "info.data[0].interval"},
+        "sip": {"match": {"path": "vk.req.data.sip[0]", "pattern": "^(https?://[^/]+)"}},
+        "purl": {"path": "vk.req.data.midurlinfo[0].purl"},
+        "u": {"join": ["{sip}", "/", "{purl}"], "sep": ""},
+        "albsfx": {"rules": [
+          {"when": [{"path": "info.data[0].album.name", "op": "nonempty"}], "value": "  《{album}》"},
+          {"value": ""}
+        ]}
+      },
+      "track": {
+        "media_class": "audio",
+        "kind": "direct",
+        "url": "{u}",
+        "ext": {"ext_of": {"url": "{u}", "whitelist": ["m4a", "mp3", "flac"], "default": "m4a"}},
+        "title_hint": {"join": ["{title}", "{artist}"], "sep": " - "},
+        "duration_s": "{dur}",
+        "ephemeral": true,
+        "note": {"join": ["免费档 pay_play=0", "{albsfx}"], "sep": ""}
+      }
+    }
+  ]
+}

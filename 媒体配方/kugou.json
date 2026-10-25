@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "name": "kugou",
+  "desc": "酷狗音乐【只取免费档】。播放接口带 privilege 字段：8=免费可播、0=同样免费可播（见下），10=需付费。这个站最省心的一点是付费曲目会**明确报错**（error 字段直接写「需要付费」、url 为空），不会静默给错东西。cookies 写 none：纯匿名，闸门只认曲子本身的档位、不认账号。吃三类 URL：①老式 song/#hash=<32位> ②新式 /mixsong/<slug>.html ③**搜索页**（粘搜索结果页的地址，就按关键词把这一页的免费档全抓出来）。",
+  "_privilege 到底几个值（2026-09-10 扩样后更正）": "第一版只看 20 首，写成「8=免费、10=付费、只有 8 才出轨」，**漏了 0 这一档**。扩到 60 首后实际出现的组合是：`(8, 有url, 无error)` 28 首、`(0, 有url, 无error)` 3 首、`(10, 空url, 需要付费)` 1 首，另有 28 首是**(无 privilege, 空 url, 您操作太频繁了)**——那是接口限速。所以闸门改成 `url 非空` + `privilege ∈ {0, 8}`：0 这档的三首逐条核过，`Content-Length` 与接口自报的 fileSize **一字不差**，字节数也跟 `码率×时长` 对得上（3009156 / 2621638 / 3692045），是**整曲不是试听片段**。",
+  "_字段名坑": "这个接口返回的是**扁平的顶层字段**，没有嵌套：歌名 p.songName、歌手 p.singerName、现成的「歌手 - 歌名」在 p.fileName、时长 p.timeLength（秒）、码率 p.bitRate（已是 kbps）、扩展名 p.extName、字节数 p.fileSize。写错不报错、只是静默变空。",
+  "_限速（重要，会伪装成「付费」）": "播放接口按 IP 限速。打太频之后它**不报 4xx、也不空响应**，而是照常 200 + 合法 JSON，只是 `privilege` 没了、`url` 为空、`error` 写「您操作太频繁了，请稍后再试」。这条落在本配方的闸门上会被判成「没拿到」，结果是 0 轨 —— **失败关闭、不会存错文件，但症状跟付费档一模一样**，只能翻运行日志里那条「步骤 播放信息 的 expect 未通过」才看得出。实测连发 60 首就触发，静置几分钟自愈。批量抓这个站要放慢、别并发。",
+  "_实测": "抽样 20 首：privilege=8（免费）3 首、其余 17 首为付费档（privilege=10）。免费档真下到 3,025,824 字节的 audio/mpeg，与远程源 **sha256 逐字节相同**，隐含码率 128.07kbps 与标称时长 189 秒吻合；付费档 0 轨、一个文件都不落。各音质档的权限是独立的（128 档 privilege=8 而 320 档 privilege=10），本配方只取 128 这一档，也就是它自家的免费档。",
+  "_时效": "播放地址形如 sharefs.kugou.com/<日期时间>/<一串校验>/... —— 路径里带时间戳，**是服务器现签的时效直链**，拉下来就得尽快下载，所以标了 ephemeral。配方不生成任何签名，这个地址是接口自己吐出来的。",
+  "_为什么用 http": "m.kugou.com 与 mobilecdn.kugou.com 的 HTTPS 证书与域名不匹配（浏览器/curl 都会直接拒连），但 HTTP 正常。这是站方自己的配置问题，不是网络封锁。",
+  "_两条 URL 形态（都在跑）": "①老式 www.kugou.com/song/#hash=<32位十六进制> —— hash 就在 URL 里，一条请求到位。②现在的主用形态 www.kugou.com/mixsong/<8位>.html —— **hash 不在 URL 里**，只在页面 HTML 的内联数据里。所以配置文件用两条 URL 模板（url 给老式、alt_url 给新式），程序会自动挑「变量齐备」的那条；新式多一步「先从页面把 hash 抽出来」。",
+  "_为什么必须有 user_agent": "m.kugou.com 那个播放接口**不带 UA 也照答**，但 www.kugou.com 的歌曲页**不带 UA 直接 403**。所以 session 里那个 Chrome UA 不是可选项 —— 少了它，老式 URL 照样能抓，新式 /mixsong/ 会「请求失败：403」然后 0 轨，看起来就像站变了。",
+  "_抽 hash 的两个坑": "① 页面原文是 `var dataFromSmarty = [{\"hash\":\"...\"}],//当前页面的信息` + 换行 + `playType = \"search_single\";` —— **数组后面跟的是逗号加一行 JS 注释，不是分号**。所以正则只能写非贪婪的 `\\[.*?\\]`，**绝不要在后面加 `\\s*;`**（那样会一路吃到后面另一个 `];`，实测吞进 21KB，JSON 解析直接报 Extra data）。② 这段数据是**单元素数组**，所以 index 写 0。",
+  "_搜索页（2026-09-10 补）": "第③类 URL 是**搜索页**：www.kugou.com/yy/html/search.html#searchType=song&searchKeyWord=<关键词>。流程是「先问搜索结果、再逐首问播放信息」——**搜索接口不给播放地址**，只给 hash，所以搜到 10 首就要多发 10 次请求，这是接口本身的样子，不是绕路。搜索走的是站方**免签名的老式移动接口** mobilecdn.kugou.com/api/v3/search/song；站内页面上那个新搜索接口要 infSign 签名，**本配方不生成签名**（红线），也不碰它。关键词直接照搬地址里那串：浏览器写进地址时已经 percent-encode 过（中文是 %E4%... 的样子），**原样传就行、千万别手动解码再传**——解码后 requests 会再编一次，等于编两遍，服务器收到的就是乱码关键词、返回 0 条。反过来说，你要是手打了一个没编码的中文关键词，requests 也会替你编一次，同样没问题。",
+  "_搜索只认歌曲搜索": "地址里必须有 searchType=song 才算数（用 lookahead 卡住）。粘 MV / 专辑 / 歌手的搜索结果页会**0 轨** —— 这是故意的：拿歌去顶 MV 是抓错了东西，宁可不抓也不给错。",
+  "_搜索一次抓多少、怎么放慢": "loop 的 max 与搜索地址里的 pagesize 是**两个数、要一起改**（默认都 10）。想多抓就把两个数同时调大，但注意下面那条限速——`pause` 是**每一项之间**等的秒数（默认 1 秒），调大批量时别把它调小。",
+  "_不覆盖": "t1.kugou.com 短链没验证过；/song/#hash=<非32位> 之类的新式短 hash 也不认 —— 取不到 hash 就 0 轨（宁可不抓也不猜）。搜索只认歌曲搜索（见上）；MV/专辑/歌手 的搜索结果页不抓。",
+  "enabled": true,
+  "order": 130,
+
+  "host_suffix": ["kugou.com"],
+  "short_hosts": [],
+  "cookies": "none",
+
+  "session": {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "referer": "https://www.kugou.com/",
+    "headers": {"Accept-Language": "zh-CN,zh;q=0.9"}
+  },
+
+  "identity": {
+    "any_of": [
+      {"name": "hash", "from": "url", "pattern": "[?&#/]hash=([0-9a-fA-F]{32})"},
+      {"name": "hash", "from": "url", "pattern": "/([0-9a-fA-F]{32})(?:\\.html|[/?#]|$)"},
+      {"name": "slug", "from": "url", "pattern": "/mixsong/([A-Za-z0-9]{6,12})\\.html"},
+      {"name": "kw", "from": "url",
+       "pattern": "/yy/html/search\\.html#(?=.*searchType=song(?:&|$)).*searchKeyWord=([^&#]+)"}
+    ]
+  },
+
+  "steps": [
+    {
+      "name": "从歌曲页抽 hash",
+      "desc": "只有 /mixsong/<slug>.html 这条形态需要走这一步（老式 URL 的 hash 已在地址里，when 判假直接跳过）。页面是 SSR，hash 写在内联的 dataFromSmarty 里。",
+      "when": [{"path": "slug", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://www.kugou.com/mixsong/{slug}.html",
+      "referer": "https://www.kugou.com/",
+      "timeout": 15,
+      "parse": {
+        "from": "页面内联脚本 dataFromSmarty",
+        "re": "dataFromSmarty\\s*=\\s*(\\[.*?\\])",
+        "json": true,
+        "index": 0
+      },
+      "as": "h",
+      "expect": [{"path": "h.hash", "op": "nonempty"}],
+      "required": true
+    },
+    {
+      "name": "播放信息",
+      "desc": "免签名。免费档返回 url + privilege=8；付费档返回空 url + error=\"需要付费\"。两个 expect 一起卡：任何一个不满足，required=true 就直接 0 轨。两条 url 模板二选一：老式 URL 用 {hash}，新式用上一步抽出来的 {h.hash}。",
+      "method": "GET",
+      "url": "http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={hash}",
+      "alt_url": "http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={h.hash}",
+      "referer": "https://www.kugou.com/",
+      "timeout": 15,
+      "as": "p",
+      "expect": [
+        {"path": "url", "op": "nonempty"},
+        {"any": [
+          {"path": "privilege", "op": "eq", "value": 8},
+          {"path": "privilege", "op": "eq", "value": 0}
+        ]}
+      ],
+      "required": true
+    },
+    {
+      "name": "搜索结果",
+      "desc": "只有搜索页那条形态走这一步（when 判假直接跳过，一条请求都不多发）。站方免签名的老式移动接口，直接给 data.total 和 data.info[]。注意它**不给播放地址**，只给 hash —— 所以下面 emit 里要拿着 hash 逐首再问一次播放信息。关键词原样传，别解码（见文件尾 _搜索页）。",
+      "when": [{"path": "kw", "op": "nonempty"}],
+      "method": "GET",
+      "url": "http://mobilecdn.kugou.com/api/v3/search/song?format=json&showtype=1&page=1&pagesize=10&keyword={kw}",
+      "referer": "https://www.kugou.com/",
+      "timeout": 15,
+      "as": "s",
+      "expect": [{"path": "s.data.info", "op": "nonempty"}],
+      "required": true
+    }
+  ],
+
+  "emit": [
+    {
+      "name": "只出免费档",
+      "desc": "privilege 用 eq 而不是 in：eq 有宽松数值比较，字段哪天变成字符串 \"8\" 也照样命中。",
+      "when": [{"any": [
+        {"path": "p.privilege", "op": "eq", "value": 8},
+        {"path": "p.privilege", "op": "eq", "value": 0}
+      ]}],
+      "set": {
+        "title": {"path": "p.songName", "default": ""},
+        "artist": {"path": "p.singerName", "default": ""},
+        "full": {"path": "p.fileName", "default": ""},
+        "label": {"rules": [
+          {"when": [{"path": "full", "op": "nonempty"}], "value": "{full}"},
+          {"value": "{title} - {artist}"}
+        ]}
+      },
+      "track": {
+        "media_class": "audio",
+        "kind": "direct",
+        "url": {"path": "p.url"},
+        "ext": {"path": "p.extName", "default": "mp3"},
+        "title_hint": "{label}",
+        "duration_s": {"path": "p.timeLength"},
+        "ephemeral": true,
+        "note": {"join": ["免费档 privilege=", {"path": "p.privilege"}, "  ",
+                          {"path": "p.bitRate"}, "Kbps"], "sep": ""}
+      }
+    },
+    {
+      "name": "搜索结果：逐首问播放信息，只出免费档",
+      "desc": "搜索接口只给 hash，所以这里按搜索结果逐首再问一次播放信息（每条一次请求，第 3 项起每项之间等 1 秒，见 loop.pause）。空 url 或 privilege 不在 {0,8} 的那几首**静默跳过**，一首出错不影响后面的 —— 这就是为什么这是条 loop 规则而不是 10 条独立规则。",
+      "_和上面那条「只出免费档」的闸门必须一致": "两条规则各写了一份 url nonempty + privilege ∈ {0,8}（JSON 里没有「引用另一条规则」的写法，只能各写一份）。**改闸门时两处都要改**：判据的解释见下面那条的 desc 与文件尾 _privilege 注释。",
+      "when": [{"path": "s.data.info", "op": "nonempty"}],
+      "loop": {
+        "path": "s.data.info",
+        "as": "it",
+        "max": 10,
+        "pause": 1.0
+      },
+      "steps": [
+        {
+          "name": "播放信息（第 {idx} 首）",
+          "desc": "和上面那条播放步骤同一个接口，只是 hash 来自搜索结果里这一首。这里不写 required：单首失败（下架/限速）只让这一首不出轨，不牵连整页。",
+          "method": "GET",
+          "url": "http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash={it.hash}",
+          "referer": "https://www.kugou.com/",
+          "timeout": 15,
+          "as": "p"
+        }
+      ],
+      "produce": [
+        {
+          "name": "免费档",
+          "when": [
+            {"path": "p.url", "op": "nonempty"},
+            {"any": [
+              {"path": "p.privilege", "op": "eq", "value": 8},
+              {"path": "p.privilege", "op": "eq", "value": 0}
+            ]}
+          ],
+          "set": {
+            "title": {"path": "p.songName", "default": ""},
+            "artist": {"path": "p.singerName", "default": ""},
+            "full": {"path": "p.fileName", "default": ""},
+            "label": {"rules": [
+              {"when": [{"path": "full", "op": "nonempty"}], "value": "{full}"},
+              {"value": "{title} - {artist}"}
+            ]}
+          },
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": {"path": "p.url"},
+            "ext": {"path": "p.extName", "default": "mp3"},
+            "title_hint": "{label}",
+            "duration_s": {"path": "p.timeLength"},
+            "ephemeral": true,
+            "note": {"join": ["免费档 privilege=", {"path": "p.privilege"}, "  ",
+                              {"path": "p.bitRate"}, "Kbps"], "sep": ""}
+          }
+        }
+      ]
+    }
+  ]
+}

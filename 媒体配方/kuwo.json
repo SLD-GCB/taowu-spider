@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "name": "kuwo",
+  "desc": "酷我音乐【只出服务器真给的那一档】。吃两类 URL：①歌曲页（/play_detail/<id>、/yinyue/<id>）②**歌单页**（/playlist_detail/<id>，逐首问、只留服务器真给的）。**付费曲目和错 id 一律 0 轨**。闸门不是靠档位字段（那个拿不到，见下），而是靠「服务器到底给没给真东西」—— 详见表里的 _闸门原理。cookies 写 none：纯匿名。",
+  "_闸门原理（为什么不看档位字段，看服务器给没给）": "判档的 PAY 位掩码**拿不到**：搜索接口 search.kuwo.cn/r.s 返回的是**单引号伪 JSON**，引擎的 r.json() 解析不了；元数据接口又被 CSRF 挡死（m.kuwo.cn 的 newh5app 回 {\"code\":404,\"error\":\"CSRF Token Not Found!\"}，www.kuwo.cn/api/www/* 回 \"The request is illegal!\"；页面也不下发 kw_token，只有个 Hm_Iuvt_ 反爬 cookie）；播放接口 convert_url3 又只回 {code,msg,url} 三键。\\n但查出一个更好的判据：**anti.s 从不拒绝（119/119 都给地址），可它给不了的东西全都塌缩成同一个文件** —— 路径恒为 .../nf/resource/n1/69/32/**588957081**.mp3、大小恒为 181521 字节。抽 6 首不同的付费曲目 + 4 个假 id（999999999999 / 0 / 123456789012345 / abcdef），**返回的全是这一个文件名**。而真实免费曲目走的是完全不同的路径形状（.../30106/trackmedia/long/M500000....mp3）。\\n所以闸门就一条：**URL 里带占位文件名 588957081 就 0 轨**。这比档位字段更准 —— 它问的是「服务器到底给没给你这首歌」，而不是「字段上说该不该给」。\\n⚠ 已知脆弱点：588957081 是酷我 CDN 上的一个固定占位资源名，**若哪天它换成别的名字，这道闸门会失效（失败开放，会重新放进占位片）**。所以要定期确认：拿一首已知付费曲目跑一次，必须出 0 轨。",
+  "_这意味着什么（务必知情）": "被挡掉的是两类：**付费曲目**（酷我不给，塞一段固定占位音频）和**打错的 id**。这两类以前会「下载成功」并生成一个看着正常的 181521 字节文件、内容跟你要的歌毫无关系，现在直接 0 轨。免费曲目不受影响：实测真下到完整文件、与远程逐字节相同。",
+  "_接口": "GET http://antiserver.kuwo.cn/anti.s?type=convert_url3&rid=MUSIC_<数字id>&format=mp3&response=url → {\"code\":200,\"msg\":\"success\",\"url\":\"https://kw-bj.kuwo.cn/...\"}。**必须用 convert_url3**：老的 convert_url（不带 3）返回的是**纯文本**一行 URL，引擎的 r.json() 会直接抛异常、整步失败 —— 这是最容易踩的一个坑。",
+  "_实测": "119 首样本逐首比对：PAY 最低位为 0 的（0 / 16515324 / 8913032，即 0x000000/0xFC00FC/0x880088）**全部**拿到完整文件；最低位为 1 的（255 / 16711935，即 0xFF/0x00FF00FF）**全部**拿到 181521 字节的试听片段。119 首里 **119 首** convert_url3 都给了地址、没有一次拒绝 —— 也就是说**没有任何服务端「拒绝」可当闸门用**。",
+  "_歌单（2026-09-10 补）": "歌单页 /playlist_detail/<id> 走另一条路：**歌单列表接口 nplserver.kuwo.cn/pl.svc**（老式接口，免签名免 CSRF，回的是**规规矩矩的双引号 JSON**，与那个被挡死的 www/api 不是一回事）。它一次给 100 首，每首带 `id`/`name`/`artist`/`duration` —— **歌名歌手直接从这儿来，不用再抓页面**。拿到列表后逐首问 convert_url3（跟单曲那条路用的是同一个接口、同一套闸门）。\\n**踩出来的坑（不写新参数就是空列表）**：pl.svc **必须带 `newver=1&pcjson=1`**（配合 `vipver=`），少了它照样回 200 + 合法 JSON + `total=30`，但 **`musiclist` 是空数组** —— 静默空，不报错，看着像「这个歌单是空的」。",
+  "_歌单的闸门": "与单曲路径**同一条**：URL 带占位文件名 `588957081` 就不出。**没有**改成看列表里的 `pay` 字段。\\n`pay` 是位掩码（最低位=128k mp3 档，见 _闸门原理），实测样本里它跟服务器行为对得上（`pay&1==0` → 真地址、`pay&1==1` → 占位片），**但它只在歌单/榜单列表里有，单曲路径根本没有**，而且拿它当闸门等于多一个会变的字段。所以：**闸门始终只认「服务器到底给没给」**。`pay` 只在探路时用来找免费样本。",
+  "_歌单能抓多少": "接口一次给 100 首（`rn=100`），`loop.max` 也写 100。**没有翻页**：超过 100 首的歌单只抓前 100（接口回里的 total 会大于 100，本配方不追）。100 首要发 101 次请求，所以 loop.pause 写 1 秒 —— 放慢是纪律，别往下调。",
+  "_歌名（2026-09-10 补上了）": "歌曲页的 `<title>` 是「歌名_歌手_单曲在线试听_酷我音乐」，用 `parse` 抠到 `_单曲在线试听` 之前那一段就是「歌名_歌手」。这条**不是必选**（`required` 没写）：页面拿不到就退回「酷我 <数字id>」，不会因为一个标题拖垮整首歌。歌单那条路不需要它 —— 列表接口自带 name/artist。",
+  "_搜索（2026-09-10 补）": "搜索结果页 `/search/list?key=<关键词>` 走 search.kuwo.cn 的 **v2 变体**（见步骤说明）。老参数那组回**单引号伪 JSON**（`{'abslist':…}`）—— 引擎 r.json() 抛异常、整步失败，**这是最容易踩的一个坑**；区别只在参数组，不在地址。列表字段：`MUSICRID`（形如 `MUSIC_3192579`，**直接塞进 convert_url3 的 rid 就是对的，不用削前缀**）、`SONGNAME`、`ARTIST`、`DURATION`（秒）。**列表里的 `PAY` 不当闸门**（它只在列表里有、单曲路径根本没有），闸门仍是服务器给没给。\n关键词**原样透传**：浏览器写进 URL 时已经编码过（`Kenny%20G`），正则捕到的就是 `Kenny%20G`，原样拼进下一跳正好；**别解码**（解了 `%20` 变空格再编回去是另一回事，见说明.md §4.1）。\n**只认歌曲搜索页**：`/search/list` 之外的搜索外形（歌手/专辑/歌单那种路径）不匹配 → 整条配方不认这个地址 → 0 轨。故意的。",
+  "_不覆盖": "歌单只抓前 100 首、搜索只抓第一页 30 首（**都没做翻页**）；排行榜/歌手页、MV 页面没验证过 —— 取不到数字 id 就 0 轨。",
+  "enabled": true,
+  "order": 140,
+
+  "host_suffix": ["kuwo.cn"],
+  "short_hosts": [],
+  "cookies": "none",
+
+  "session": {
+    "referer": "https://www.kuwo.cn/",
+    "headers": {"Accept-Language": "zh-CN,zh;q=0.9"}
+  },
+
+  "identity": {
+    "any_of": [
+      {"name": "pid", "from": "url", "pattern": "/playlist_detail/(\\d+)"},
+      {"name": "kw", "from": "url", "pattern": "/search/list\\?.*key=([^&#]+)"},
+      {"name": "rid", "from": "url", "pattern": "/play_detail/(\\d+)"},
+      {"name": "rid", "from": "url", "pattern": "/yinyue/(\\d+)"}
+    ]
+  },
+
+  "steps": [
+    {
+      "name": "搜索结果",
+      "desc": "只有搜索结果页那条形态走这一步。**用 search.kuwo.cn 的 v2 变体**（那一串 client/ver/vipver/newver/rformat=json 一个都不能少）：同一台机器同一个路径，老参数回的是**单引号伪 JSON**（`{'abslist':…}`，引擎的 r.json() 直接抛异常），v2 这组参数回的是**规规矩矩的双引号 JSON**，r.json() 吃得下。免签名、无 CSRF。",
+      "when": [{"path": "kw", "op": "nonempty"}],
+      "method": "GET",
+      "url": "http://search.kuwo.cn/r.s?client=kt&all={kw}&pn=0&rn=30&uid=0&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&vermerge=1&mobi=1",
+      "referer": "https://www.kuwo.cn/",
+      "timeout": 20,
+      "as": "s",
+      "expect": [{"path": "s.abslist", "op": "nonempty"}],
+      "required": true
+    },
+    {
+      "name": "歌单列表",
+      "desc": "只有歌单页那条形态走这一步（when 判假直接跳过）。老式接口，免签名，回规规矩矩的双引号 JSON。**必须带 newver=1&pcjson=1**，否则 musiclist 是空数组且不报错。",
+      "when": [{"path": "pid", "op": "nonempty"}],
+      "method": "GET",
+      "url": "http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid={pid}&pn=0&rn=100&encode=utf8&keyset=pl2012&identity=kuwo&pcmp4=1&vipver=MUSIC_9.1.1.2_BCS2&newver=1&pcjson=1",
+      "referer": "https://www.kuwo.cn/",
+      "timeout": 20,
+      "as": "s",
+      "expect": [{"path": "s.musiclist", "op": "nonempty"}],
+      "required": true
+    },
+    {
+      "name": "取歌名（可选）",
+      "desc": "歌曲页 <title> 是「歌名_歌手_单曲在线试听_酷我音乐」，抠到 _单曲在线试听 之前那一段就是「**歌名_歌手**」（下划线是页面自己的分隔格式，不是笔误；歌单那条路用的是更顺眼的「歌名 - 歌手」）。**unescape 必须开**：歌手带 & 时页面写的是 `&amp;`，不开就会打印成「古巨基&amp;黄子弘凡」并顶进文件名。required 没写 = 拿不到就退回「酷我 <id>」，不拖垮整首歌。",
+      "when": [{"path": "rid", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://www.kuwo.cn/play_detail/{rid}",
+      "referer": "https://www.kuwo.cn/",
+      "timeout": 15,
+      "parse": {
+        "from": "页面 <title>",
+        "re": "<title>(.+?)_单曲在线试听",
+        "json": false,
+        "unescape": true
+      },
+      "as": "t",
+      "expect": [{"path": "t", "op": "nonempty"}]
+    },
+    {
+      "name": "取播放地址",
+      "desc": "convert_url3 回真 JSON，引擎吃得了。code=200 且 url 非空才继续；拿不到就 0 轨（不猜、不降级）。when 判 rid：**歌单路径上这一步必须显式跳过** —— 不写 when 的话 '{rid}' 会渲染不出来，引擎打一行「URL 模板变量不全」就跳过（跳过不算失败，required 也拦不住），日志里看着像配方写错了。",
+      "when": [{"path": "rid", "op": "nonempty"}],
+      "method": "GET",
+      "url": "http://antiserver.kuwo.cn/anti.s?type=convert_url3&rid=MUSIC_{rid}&format=mp3&response=url",
+      "referer": "https://www.kuwo.cn/",
+      "timeout": 15,
+      "as": "p",
+      "expect": [
+        {"path": "code", "op": "eq", "value": 200},
+        {"path": "url", "op": "nonempty"}
+      ],
+      "required": true
+    }
+  ],
+
+  "emit": [
+    {
+      "name": "只出服务器真给的那一档",
+      "desc": "not contains：URL 里带占位文件名 = 服务器没给真东西（付费曲目 / 错 id）→ 0 轨。",
+      "when": [
+        {"path": "p.url", "op": "nonempty"},
+        {"not": {"path": "p.url", "op": "contains", "value": "588957081"}}
+      ],
+      "set": {
+        "label": {"rules": [
+          {"when": [{"path": "t", "op": "nonempty"}], "value": "{t}"},
+          {"value": "酷我 {rid}"}
+        ]}
+      },
+      "track": {
+        "media_class": "audio",
+        "kind": "direct",
+        "url": {"path": "p.url"},
+        "ext": {"ext_of": {"url": "{p.url}", "whitelist": ["mp3", "aac", "m4a", "flac"], "default": "mp3"}},
+        "title_hint": "{label}",
+        "note": "酷我直链（免费档：服务器给的是真文件）"
+      }
+    },
+    {
+      "name": "歌单：逐首问播放地址，只出服务器真给的那一档",
+      "desc": "歌单列表给 id/name/artist/duration，逐首问 convert_url3（与单曲路径同一个接口、**同一条闸门**）。拿不到真地址的那几首静默跳过，一首不影响其它首。歌名歌手直接用列表里的，不额外抓页面。",
+      "_闸门必须与上一条一致": "JSON 没有「引用另一条规则」的写法，判据只能各写一份 —— **改闸门时两处都要改**（判据解释见文件尾 _歌单的闸门）。",
+      "when": [{"path": "s.musiclist", "op": "nonempty"}],
+      "loop": {
+        "path": "s.musiclist",
+        "as": "it",
+        "max": 100,
+        "pause": 1.0
+      },
+      "steps": [
+        {
+          "name": "取播放地址（第 {idx} 首）",
+          "desc": "不写 required：单首拿不到（付费/下架）只跳过这一首，不牵连整个歌单。",
+          "method": "GET",
+          "url": "http://antiserver.kuwo.cn/anti.s?type=convert_url3&rid=MUSIC_{it.id}&format=mp3&response=url",
+          "referer": "https://www.kuwo.cn/",
+          "timeout": 15,
+          "as": "p"
+        }
+      ],
+      "produce": [
+        {
+          "name": "真地址档",
+          "when": [
+            {"path": "p.url", "op": "nonempty"},
+            {"not": {"path": "p.url", "op": "contains", "value": "588957081"}}
+          ],
+          "set": {
+            "label": {"rules": [
+              {"when": [{"all": [
+                {"path": "it.name", "op": "nonempty"},
+                {"path": "it.artist", "op": "nonempty"}]}],
+               "value": "{it.name} - {it.artist}"},
+              {"when": [{"path": "it.name", "op": "nonempty"}], "value": "{it.name}"},
+              {"value": "酷我 {it.id}"}
+            ]}
+          },
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": {"path": "p.url"},
+            "ext": {"ext_of": {"url": "{p.url}", "whitelist": ["mp3", "aac", "m4a", "flac"], "default": "mp3"}},
+            "title_hint": "{label}",
+            "duration_s": {"path": "it.duration"},
+            "note": "酷我歌单直链（免费档：服务器给的是真文件）"
+          }
+        }
+      ]
+    },
+    {
+      "name": "搜索：逐首问播放地址，只出服务器真给的那一档",
+      "desc": "搜索接口只给列表（MUSICRID/歌名/歌手/时长），**没有播放地址** → 必然 1+N 次请求（搜一次 + 逐首问 convert_url3）。每条也用同一条闸门。rn=30 就去问 30 首，pause 1.0 是刹车（这站按 IP 限速，发太密返 200+空数据）。",
+      "_闸门必须与前两条一致": "JSON 没有「引用另一条规则」的写法，判据只能各写一份 —— **改闸门时三处都要改**（判据解释见文件尾 _歌单的闸门）。",
+      "when": [{"path": "s.abslist", "op": "nonempty"}],
+      "loop": {
+        "path": "s.abslist",
+        "as": "it",
+        "max": 30,
+        "pause": 1.0
+      },
+      "steps": [
+        {
+          "name": "取播放地址（第 {idx} 首）",
+          "desc": "不写 required：单首拿不到（付费/下架）只跳过这一首，不牵连整页。",
+          "method": "GET",
+          "url": "http://antiserver.kuwo.cn/anti.s?type=convert_url3&rid={it.MUSICRID}&format=mp3&response=url",
+          "referer": "https://www.kuwo.cn/",
+          "timeout": 15,
+          "as": "p"
+        }
+      ],
+      "produce": [
+        {
+          "name": "真地址档",
+          "when": [
+            {"path": "p.url", "op": "nonempty"},
+            {"not": {"path": "p.url", "op": "contains", "value": "588957081"}}
+          ],
+          "set": {
+            "label": {"rules": [
+              {"when": [{"all": [
+                {"path": "it.SONGNAME", "op": "nonempty"},
+                {"path": "it.ARTIST", "op": "nonempty"}]}],
+               "value": "{it.SONGNAME} - {it.ARTIST}"},
+              {"when": [{"path": "it.SONGNAME", "op": "nonempty"}], "value": "{it.SONGNAME}"},
+              {"value": "酷我 {it.MUSICRID}"}
+            ]}
+          },
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": {"path": "p.url"},
+            "ext": {"ext_of": {"url": "{p.url}", "whitelist": ["mp3", "aac", "m4a", "flac"], "default": "mp3"}},
+            "title_hint": "{label}",
+            "duration_s": {"path": "it.DURATION"},
+            "note": "酷我搜索直链（免费档：服务器给的是真文件）"
+          }
+        }
+      ]
+    }
+  ]
+}

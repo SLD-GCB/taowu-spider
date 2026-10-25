@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "name": "netease_music",
+  "desc": "网易云音乐【只取免费档】。支持两种网址：① 单曲页 —— 用 song/detail 拿 fee 判档；② 歌单页 —— 先用 v6/playlist/detail 拿到**全部**曲目 id，再分批取详情，**逐首**判 fee。fee 为 0 或 8 才出轨，其余（1=VIP、4=数字专辑）一条轨都不出。outer/url 对 VIP 曲目不是报错，而是 302 到 music.163.com 的 404 页面（HTTP 200 + text/html）—— 不判 fee 就会把那张 HTML 错误页当 .mp3 存下来，所以这里的 fee 闸门同时也是防「存错文件」的闸门。cookies 写 none：纯匿名访问，任何已登录的 VIP 会话都不参与，闸门只认曲子本身的档位、不认账号。",
+  "_字段名坑": "song/detail 这个接口是【旧版字段名】，和网页端新版接口不一样，写错不报错、只是静默变空：歌手是 artists[]（不是 ar[]）、专辑是 album.name（不是 al.name）、时长是 duration 毫秒（不是 dt）。本接口里没有 st、没有 privilege、也没有 bMusic.playable（实测 493 首全为 null），所以要判档只能靠 fee。",
+  "_歌单怎么拿全（2026-09-10 实测）": "歌单页必须走两步，**一步都省不掉，原因如下**：\n① `/api/v6/playlist/detail?id=N` 匿名就能拿到 `playlist.trackIds` —— 这是**全部**曲目的 id 清单（实测 306 首的歌单给了 306 个 id）；但同一个响应里的 `playlist.tracks` **只有前 10 首**的完整对象，而且这个截断**翻不了页**：加 s / offset / n / limit 参数全被忽略，恒回 10 首。旧接口 `/api/playlist/detail` 更差，连 trackIds 都没有，`trackCount` 直接就是 10。\n② 所以每首的 fee / 歌名 / 歌手只能另外问 `/api/song/detail?ids=[...]`。**这条接口一次最多认 200 个 id**（实测：200 个回 200 首，250 和 306 都只回 201 首）。因此配方按 200 一首一批切成 5 批（覆盖到 1000 首），用路径切片 `trackIds[0:200].id` 取批、渲染成 JSON 数组塞进 URL。\n⚠ **为什么要分批，不能逐首查**：逐首发 306 次请求会被**静默限流** —— 连发约 50 次之后，接口开始返回 **HTTP 200 + 合法 JSON + songs 空数组**，不报错、不返回 429。配方会因此**悄悄少出几百条轨却显示成功**（实测 306 首里只出了 11 首）。这正是「HTTP 全绿、结果是错的」。分批后只需 2 次请求，实测 306/306 全拿到。\n⚠ 上限：最多覆盖 1000 首（5 批 × 200）；更大的歌单只会出前 1000 首。",
+  "_实测": "474 首采样：fee 只出现 0/1/8 三种。56 首免费档(0/8) 全部 302 到 m*.music.126.net 且 Content-Type=audio/mpeg；77 首 VIP 档(1) 全部落到 text/html 的 404 页。免费档零漏网。\n2026-09-10 真机试水：单曲 `/#/song?id=191248`（fee=8）Range 抽检 206+audio/mpeg+ID3 头，真下 3,795,113 字节、与远程逐字节一致、核完即删。",
+  "_真机试水（2026-09-10）": "用户给的两个 URL 实跑：\n① music.163.com/#/song?id=191248 → route=recipe、1 轨「明天过后 - 张杰」、fee=8 低音质免费档。Range 0-2047 抽检：206 + audio/mpeg、头是 ID3（49 44 33），落到 m801.music.126.net 的**带 vuutv= 时效 token 的 http 直链**。真下 **3,795,113 字节**、与远程逐字节一致，核完即删。\n② music.163.com/#/playlist?id=2430524968（306 首）→ 0 轨。\n⚠ 早期 identity 写的是 [?&]id=(\\d+)，**太松**：歌单页里的 id 照样被当成歌曲 id 去查。实测把已知真歌 id 塞进歌单外形：/#/playlist?id=191248 与 /#/album?id=191248 **都吐出了同一首「明天过后」**。现已把 pattern 收成必须带 /song 或 /playlist。",
+  "_不覆盖": "单曲只认 id 前面带 /song 的形态；歌单只认 /playlist。专辑页 /album、歌手页、分享短链 163cn.tv 一律 0 轨 —— 宁可不抓也不猜。",
+  "enabled": true,
+  "order": 120,
+
+  "host_suffix": ["music.163.com"],
+  "short_hosts": [],
+  "cookies": "none",
+
+  "session": {
+    "referer": "https://music.163.com/",
+    "headers": {"Accept-Language": "zh-CN,zh;q=0.9"}
+  },
+
+  "identity": {
+    "_为什么必须带 /song 或 /playlist": "原来是 [?&]id=(\\d+) —— 太松，任何页面里的 id 都会被当成歌曲 id。实测 /#/playlist?id=191248 和 /#/album?id=191248 都吐出了同一首不相干的歌。现在要求 id 前面必须是 /song（单曲）或 /playlist（歌单），其它页面一律取不到 id → 0 轨（失败关闭）。",
+    "any_of": [
+      {"name": "sid",  "from": "url", "pattern": "/song\\?id=(\\d+)",     "type": "int"},
+      {"name": "sid",  "from": "url", "pattern": "/song/(\\d+)",         "type": "int"},
+      {"name": "plid", "from": "url", "pattern": "/playlist\\?id=(\\d+)", "type": "int"},
+      {"name": "plid", "from": "url", "pattern": "/playlist/(\\d+)",     "type": "int"}
+    ]
+  },
+
+  "steps": [
+    {
+      "name": "单曲：取歌曲信息",
+      "desc": "这个接口至今免签名。required=true 是关键：拿不到 fee 就判不出档位，此时必须一条轨都不出（宁可不抓，也不猜）。",
+      "when": [{"path": "sid", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/song/detail?ids=[{sid}]",
+      "referer": "https://music.163.com/",
+      "timeout": 12,
+      "as": "d",
+      "expect": [{"path": "songs", "op": "nonempty"}],
+      "required": true
+    },
+    {
+      "name": "歌单：取全部曲目 id",
+      "desc": "trackIds 里是**全部**曲目的 id（本歌单 306 个）；同一响应里的 tracks 只有前 10 首且翻不了页，所以只取 id 清单，详情另外分批问。",
+      "when": [{"path": "plid", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/v6/playlist/detail?id={plid}",
+      "referer": "https://music.163.com/",
+      "timeout": 20,
+      "as": "pl",
+      "expect": [{"path": "playlist.trackIds", "op": "nonempty"}],
+      "required": true
+    },
+    {
+      "name": "歌单：批量取详情 1-200",
+      "desc": "song/detail 一次最多认 200 个 id。切片 trackIds[0:200].id 求值成 id 列表，模板渲染成 [1, 2, 3] 直接塞进 URL（服务器接受带空格的 JSON 数组，实测 5/5 正常）。",
+      "when": [{"path": "pl.playlist.trackIds[0:200].id", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/song/detail?ids={pl.playlist.trackIds[0:200].id}",
+      "referer": "https://music.163.com/",
+      "timeout": 30,
+      "as": "b1",
+      "expect": [{"path": "songs", "op": "nonempty"}]
+    },
+    {
+      "name": "歌单：批量取详情 201-400",
+      "when": [{"path": "pl.playlist.trackIds[200:400].id", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/song/detail?ids={pl.playlist.trackIds[200:400].id}",
+      "referer": "https://music.163.com/",
+      "timeout": 30,
+      "as": "b2",
+      "expect": [{"path": "songs", "op": "nonempty"}]
+    },
+    {
+      "name": "歌单：批量取详情 401-600",
+      "when": [{"path": "pl.playlist.trackIds[400:600].id", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/song/detail?ids={pl.playlist.trackIds[400:600].id}",
+      "referer": "https://music.163.com/",
+      "timeout": 30,
+      "as": "b3",
+      "expect": [{"path": "songs", "op": "nonempty"}]
+    },
+    {
+      "name": "歌单：批量取详情 601-800",
+      "when": [{"path": "pl.playlist.trackIds[600:800].id", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/song/detail?ids={pl.playlist.trackIds[600:800].id}",
+      "referer": "https://music.163.com/",
+      "timeout": 30,
+      "as": "b4",
+      "expect": [{"path": "songs", "op": "nonempty"}]
+    },
+    {
+      "name": "歌单：批量取详情 801-1000",
+      "when": [{"path": "pl.playlist.trackIds[800:1000].id", "op": "nonempty"}],
+      "method": "GET",
+      "url": "https://music.163.com/api/song/detail?ids={pl.playlist.trackIds[800:1000].id}",
+      "referer": "https://music.163.com/",
+      "timeout": 30,
+      "as": "b5",
+      "expect": [{"path": "songs", "op": "nonempty"}]
+    }
+  ],
+
+  "emit": [
+    {
+      "name": "单曲：只出免费档",
+      "desc": "闸门用两个 eq 而不是一个 in：eq 有宽松数值比较，fee 哪天变成字符串 \"8\" 也照样命中；in 是严格比较，会静默地一首都不出。",
+      "when": [
+        {"path": "sid", "op": "nonempty"},
+        {"any": [
+          {"path": "d.songs[0].fee", "op": "eq", "value": 0},
+          {"path": "d.songs[0].fee", "op": "eq", "value": 8}
+        ]}
+      ],
+      "set": {
+        "title": {"path": "d.songs[0].name", "default": ""},
+        "artist": {"path": "d.songs[0].artists[0].name", "default": ""},
+        "album": {"path": "d.songs[0].album.name", "default": ""},
+        "dur": {"div": [{"path": "d.songs[0].duration"}, 1000]},
+        "albsfx": {"rules": [
+          {"when": [{"path": "d.songs[0].album.name", "op": "nonempty"}], "value": "  《{album}》"},
+          {"value": ""}
+        ]}
+      },
+      "track": {
+        "media_class": "audio",
+        "kind": "direct",
+        "url": "https://music.163.com/song/media/outer/url?id={sid}",
+        "ext": "mp3",
+        "title_hint": {"join": ["{title}", "{artist}"], "sep": " - "},
+        "duration_s": {"path": "dur"},
+        "note": {"rules": [
+          {"when": [{"path": "d.songs[0].fee", "op": "eq", "value": 0}],
+           "value": {"join": ["免费档 fee=0", "{albsfx}"], "sep": ""}},
+          {"value": {"join": ["低音质免费档 fee=8", "{albsfx}"], "sep": ""}}
+        ]}
+      }
+    },
+
+    {
+      "name": "歌单第 1 批（1-200 首）：逐首判档",
+      "desc": "loop 对 b1.songs 每一项跑一遍，produce 的 when 逐首卡 fee —— 付费曲目在这里被挡掉，不会出轨。",
+      "when": [{"path": "plid", "op": "nonempty"}],
+      "loop": {"path": "b1.songs", "as": "s", "max": 200},
+      "produce": [
+        {
+          "when": [{"any": [
+            {"path": "s.fee", "op": "eq", "value": 0},
+            {"path": "s.fee", "op": "eq", "value": 8}
+          ]}],
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": "https://music.163.com/song/media/outer/url?id={s.id}",
+            "ext": "mp3",
+            "title_hint": {"join": ["{s.name}", "{s.artists[0].name}"], "sep": " - "},
+            "duration_s": {"div": [{"path": "s.duration"}, 1000]},
+            "note": {"rules": [
+              {"when": [{"path": "s.album.name", "op": "nonempty"}],
+               "value": "歌单免费档 fee={s.fee}  《{s.album.name}》"},
+              {"value": "歌单免费档 fee={s.fee}"}
+            ]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "歌单第 2 批（201-400 首）：逐首判档",
+      "when": [{"path": "plid", "op": "nonempty"}],
+      "loop": {"path": "b2.songs", "as": "s", "max": 200},
+      "produce": [
+        {
+          "when": [{"any": [
+            {"path": "s.fee", "op": "eq", "value": 0},
+            {"path": "s.fee", "op": "eq", "value": 8}
+          ]}],
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": "https://music.163.com/song/media/outer/url?id={s.id}",
+            "ext": "mp3",
+            "title_hint": {"join": ["{s.name}", "{s.artists[0].name}"], "sep": " - "},
+            "duration_s": {"div": [{"path": "s.duration"}, 1000]},
+            "note": {"rules": [
+              {"when": [{"path": "s.album.name", "op": "nonempty"}],
+               "value": "歌单免费档 fee={s.fee}  《{s.album.name}》"},
+              {"value": "歌单免费档 fee={s.fee}"}
+            ]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "歌单第 3 批（401-600 首）：逐首判档",
+      "when": [{"path": "plid", "op": "nonempty"}],
+      "loop": {"path": "b3.songs", "as": "s", "max": 200},
+      "produce": [
+        {
+          "when": [{"any": [
+            {"path": "s.fee", "op": "eq", "value": 0},
+            {"path": "s.fee", "op": "eq", "value": 8}
+          ]}],
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": "https://music.163.com/song/media/outer/url?id={s.id}",
+            "ext": "mp3",
+            "title_hint": {"join": ["{s.name}", "{s.artists[0].name}"], "sep": " - "},
+            "duration_s": {"div": [{"path": "s.duration"}, 1000]},
+            "note": {"rules": [
+              {"when": [{"path": "s.album.name", "op": "nonempty"}],
+               "value": "歌单免费档 fee={s.fee}  《{s.album.name}》"},
+              {"value": "歌单免费档 fee={s.fee}"}
+            ]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "歌单第 4 批（601-800 首）：逐首判档",
+      "when": [{"path": "plid", "op": "nonempty"}],
+      "loop": {"path": "b4.songs", "as": "s", "max": 200},
+      "produce": [
+        {
+          "when": [{"any": [
+            {"path": "s.fee", "op": "eq", "value": 0},
+            {"path": "s.fee", "op": "eq", "value": 8}
+          ]}],
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": "https://music.163.com/song/media/outer/url?id={s.id}",
+            "ext": "mp3",
+            "title_hint": {"join": ["{s.name}", "{s.artists[0].name}"], "sep": " - "},
+            "duration_s": {"div": [{"path": "s.duration"}, 1000]},
+            "note": {"rules": [
+              {"when": [{"path": "s.album.name", "op": "nonempty"}],
+               "value": "歌单免费档 fee={s.fee}  《{s.album.name}》"},
+              {"value": "歌单免费档 fee={s.fee}"}
+            ]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "歌单第 5 批（801-1000 首）：逐首判档",
+      "when": [{"path": "plid", "op": "nonempty"}],
+      "loop": {"path": "b5.songs", "as": "s", "max": 200},
+      "produce": [
+        {
+          "when": [{"any": [
+            {"path": "s.fee", "op": "eq", "value": 0},
+            {"path": "s.fee", "op": "eq", "value": 8}
+          ]}],
+          "track": {
+            "media_class": "audio",
+            "kind": "direct",
+            "url": "https://music.163.com/song/media/outer/url?id={s.id}",
+            "ext": "mp3",
+            "title_hint": {"join": ["{s.name}", "{s.artists[0].name}"], "sep": " - "},
+            "duration_s": {"div": [{"path": "s.duration"}, 1000]},
+            "note": {"rules": [
+              {"when": [{"path": "s.album.name", "op": "nonempty"}],
+               "value": "歌单免费档 fee={s.fee}  《{s.album.name}》"},
+              {"value": "歌单免费档 fee={s.fee}"}
+            ]}
+          }
+        }
+      ]
+    }
+  ]
+}

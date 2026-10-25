@@ -1,31 +1,47 @@
+# browser_paths.py — 浏览器路径配置（v12.1.2）
+# 源码运行时由 config.py 自动检测，打包后此文件可被用户手动编辑。
+# 此文件会在 build.py 打包时复制到 dist/ 目录，与 EXE 同级。
 import os
 import sys
 
-def get_app_root():
+# 优先使用 config.py 的自动检测路径
+try:
+    from config import CHROME_PATH as _cfg_chrome, CHROMEDRIVER_PATH as _cfg_driver, FULL_CHROME_DIR as _cfg_dir
+except ImportError:
+    _cfg_chrome = None
+    _cfg_driver = None
+    _cfg_dir = None
+
+# ── 如果打包后 config 不可用，则回退到手动路径 ──
+def _get_dist_root():
+    """获取 EXE / 脚本所在目录（dist/ 或源码根目录）。"""
     if getattr(sys, "frozen", False):
-        # 打包后：BASE_DIR 就是 dist 目录
         return os.path.dirname(os.path.abspath(sys.executable))
     else:
         return os.path.dirname(os.path.abspath(__file__))
 
-BASE_DIR = get_app_root()
+_DIST_ROOT = _get_dist_root()
 
-# 关键：加上 .exe 后缀，和实际文件匹配
-FULL_CHROME_DIR = os.path.join(BASE_DIR, "full_chrome")
-CHROME_PATH = os.path.join(FULL_CHROME_DIR, "chrome.exe")
-CHROMEDRIVER_PATH = os.path.join(FULL_CHROME_DIR, "chromedriver.exe")
+# Chrome 浏览器可执行文件路径
+CHROME_PATH = _cfg_chrome if _cfg_chrome and os.path.exists(_cfg_chrome) else os.path.join(
+    _DIST_ROOT, "full_chrome", "chrome.exe"
+)
 
-# 启动自检（方便你看路径）
-print(f"[DEBUG] BASE_DIR: {BASE_DIR}")
-print(f"[DEBUG] 尝试读取Chrome: {CHROME_PATH}")
-print(f"[DEBUG] 尝试读取Driver: {CHROMEDRIVER_PATH}")
+# ChromeDriver 可执行文件路径
+CHROMEDRIVER_PATH = _cfg_driver if _cfg_driver and os.path.exists(_cfg_driver) else os.path.join(
+    _DIST_ROOT, "full_chrome", "chromedriver.exe"
+)
 
-if not os.path.exists(CHROME_PATH):
-    print(f"❌ 找不到 Chrome: {CHROME_PATH}")
-    input("按回车退出...")
-    sys.exit(1)
+# Chrome 完整目录
+FULL_CHROME_DIR = _cfg_dir if _cfg_dir and os.path.exists(_cfg_dir) else os.path.join(
+    _DIST_ROOT, "full_chrome"
+)
 
-if not os.path.exists(CHROMEDRIVER_PATH):
-    print(f"❌ 找不到 Chromedriver: {CHROMEDRIVER_PATH}")
-    input("按回车退出...")
-    sys.exit(1)
+# 程序根目录
+BASE_DIR = _DIST_ROOT
+
+# ── 用户可在下方手动设置路径（覆盖自动检测） ──
+# 取消注释并填写你自己的路径：
+# CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+# CHROMEDRIVER_PATH = r"D:\tools\chromedriver.exe"
+# FULL_CHROME_DIR = r"D:\my_chrome"

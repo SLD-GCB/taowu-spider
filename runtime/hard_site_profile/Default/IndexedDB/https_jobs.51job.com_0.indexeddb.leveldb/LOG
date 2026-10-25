@@ -1,0 +1,13 @@
+2026/06/23-22:53:06.243 1b00 Reusing MANIFEST d:\github_code\code\python\project\taowu-spider-v12.1.1-original_code\taowu-spider-v12.1.1\runtime\hard_site_profile\Default\IndexedDB\https_jobs.51job.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/23-22:53:06.244 1b00 Recovering log #42
+2026/06/23-22:53:06.244 1b00 Reusing old log d:\github_code\code\python\project\taowu-spider-v12.1.1-original_code\taowu-spider-v12.1.1\runtime\hard_site_profile\Default\IndexedDB\https_jobs.51job.com_0.indexeddb.leveldb/000042.log 
+2026/06/23-22:53:06.311 4740 Level-0 table #47: started
+2026/06/23-22:53:06.317 4740 Level-0 table #47: 1730 bytes OK
+2026/06/23-22:53:06.320 4740 Delete type=0 #42
+2026/06/23-22:53:06.320 1b00 Manual compaction at level-0 from '\x00\x0e\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x0f\x00\x00\x00' @ 0 : 0; will stop at '\x00\x0e\x00\x00\xc8\x04\x00d\x00a\x00t\x00a' @ 852 : 1
+2026/06/23-22:53:06.321 1b00 Compacting 1@0 + 1@1 files
+2026/06/23-22:53:06.324 1b00 Generated table #48@0: 31 keys, 800 bytes
+2026/06/23-22:53:06.324 1b00 Compacted 1@0 + 1@1 files => 800 bytes
+2026/06/23-22:53:06.327 1b00 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/23-22:53:06.328 1b00 Delete type=2 #47
+2026/06/23-22:53:06.328 1b00 Manual compaction at level-0 from '\x00\x0e\x00\x00\xc8\x04\x00d\x00a\x00t\x00a' @ 852 : 1 .. '\x00\x0f\x00\x00\x00' @ 0 : 0; will stop at (end)

@@ -1,0 +1,14 @@
+2026/06/16-19:31:16.226 a94 Reusing MANIFEST d:\github_code\code\python\梼杌v1.0-GUI版本-deepseek升级版\runtime\chrome_profile\Default\IndexedDB\https_www.lagou.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/16-19:31:16.226 a94 Recovering log #16
+2026/06/16-19:31:16.226 a94 Reusing old log d:\github_code\code\python\梼杌v1.0-GUI版本-deepseek升级版\runtime\chrome_profile\Default\IndexedDB\https_www.lagou.com_0.indexeddb.leveldb/000016.log 
+2026/06/16-19:31:16.226 a94 Delete type=2 #15
+2026/06/16-19:31:16.263 3cb0 Level-0 table #21: started
+2026/06/16-19:31:16.273 3cb0 Level-0 table #21: 1054 bytes OK
+2026/06/16-19:31:16.283 3cb0 Delete type=0 #16
+2026/06/16-19:31:16.283 a94 Manual compaction at level-0 from '\x00\x07\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at '\x00\x07\x00\x00\xc8\x04\x00d\x00a\x00t\x00a' @ 404 : 1
+2026/06/16-19:31:16.285 a94 Compacting 1@0 + 1@1 files
+2026/06/16-19:31:16.292 a94 Generated table #22@0: 40 keys, 827 bytes
+2026/06/16-19:31:16.292 a94 Compacted 1@0 + 1@1 files => 827 bytes
+2026/06/16-19:31:16.299 a94 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/16-19:31:16.299 a94 Delete type=2 #21
+2026/06/16-19:31:16.300 a94 Manual compaction at level-0 from '\x00\x07\x00\x00\xc8\x04\x00d\x00a\x00t\x00a' @ 404 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at (end)

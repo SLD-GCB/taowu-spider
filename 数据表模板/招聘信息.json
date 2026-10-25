@@ -1,0 +1,75 @@
+{
+  "id": "招聘信息",
+  "name": "招聘信息",
+  "desc": "招聘/求职详情页（现有招聘表，引擎原样）",
+  "engine": "legacy_recruit",
+  "columns": [
+    {
+      "name": "企业名称",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "岗位名称",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "工作地点",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "薪资范围",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "学历要求",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "工作经验",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "岗位职责",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "福利信息",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "联系方式",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    },
+    {
+      "name": "job_url",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "link"
+    },
+    {
+      "name": "source",
+      "type": "TEXT",
+      "synonyms": [],
+      "clean": "text"
+    }
+  ],
+  "_note": "表内共12列：id自动主键 + 9业务列 + job_url + source（对齐现招聘表）"
+}
